@@ -64,6 +64,11 @@ export interface PRPopup {
 export const SKILL_IDS = {
   globalXp10: 'skill_global_xp_10',
   chestXp10: 'skill_chest_xp_10',
+  legsXp10: 'skill_legs_xp_10',
+  highIntensityXp10: 'skill_high_intensity_xp_10',
+  streakXp5: 'skill_streak_xp_5',
+  prBonus50: 'skill_pr_bonus_50',
 } as const
 
 export type SkillId = (typeof SKILL_IDS)[keyof typeof SKILL_IDS]
+export type SkillLevels = Partial<Record<SkillId, number>>

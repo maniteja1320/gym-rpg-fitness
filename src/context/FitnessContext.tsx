@@ -14,6 +14,7 @@ import type {
   PRRecord,
   QuestDefinition,
   QuestProgress,
+  SkillLevels,
   ToastItem,
   WorkoutEntry,
 } from '../types'
@@ -30,7 +31,7 @@ import {
 import { applyXpGain, getLevelProgress } from '../lib/level'
 import {
   computeBaseWorkoutXp,
-  PR_BONUS_XP,
+  computePrBonusXp,
   trainingVolume,
 } from '../lib/xp'
 import {
@@ -44,7 +45,7 @@ const STORAGE_KEY = 'gym-rpg-fitness-v1'
 export interface FitnessState {
   totalXp: number
   skillPoints: number
-  unlockedSkills: string[]
+  skillLevels: SkillLevels
   workouts: WorkoutEntry[]
   muscleXp: Record<MuscleGroup, number>
   currentStreak: number
@@ -78,7 +79,7 @@ type Action =
         intensity: Intensity
       }
     }
-  | { type: 'UNLOCK_SKILL'; skillId: SkillId }
+  | { type: 'UPGRADE_SKILL'; skillId: SkillId }
   | { type: 'DELETE_WORKOUT'; id: string }
   | { type: 'UNDO_DELETE_WORKOUT' }
   | { type: 'DISMISS_TOAST'; id: string }
@@ -103,6 +104,10 @@ function makeToast(message: string, variant: ToastItem['variant']): ToastItem {
 
 function prKey(muscle: MuscleGroup, exercise: string): string {
   return `${muscle}::${exercise}`
+}
+
+function totalSpentSkillPoints(skillLevels: SkillLevels): number {
+  return Object.values(skillLevels).reduce((sum, level) => sum + (level ?? 0), 0)
 }
 
 function ensurePeriods(s: FitnessState, now: Date): FitnessState {
@@ -218,9 +223,9 @@ function rebuildStateFromWorkouts(previous: FitnessState, remaining: WorkoutEntr
   let next = createFreshState(now)
   next = {
     ...next,
-    unlockedSkills: [...previous.unlockedSkills],
-    // Re-apply spent points for currently unlocked skills (1 point per skill).
-    skillPoints: -previous.unlockedSkills.length,
+    skillLevels: { ...previous.skillLevels },
+    // Re-apply spent points for current skill levels (1 point per level).
+    skillPoints: -totalSpentSkillPoints(previous.skillLevels),
   }
 
   const sorted = [...remaining].sort(
@@ -304,14 +309,27 @@ function reducer(state: FitnessState, action: Action): FitnessState {
     }
     case 'CLEAR_PR_POPUP':
       return { ...state, prPopup: null }
-    case 'UNLOCK_SKILL': {
+    case 'UPGRADE_SKILL': {
       const id = action.skillId
-      if (state.unlockedSkills.includes(id)) return state
       if (state.skillPoints < 1) return state
+      const currentLevel = state.skillLevels[id] ?? 0
+      const MAX_LEVELS: Partial<Record<SkillId, number>> = {
+        [SKILL_IDS.globalXp10]: 5,
+        [SKILL_IDS.chestXp10]: 3,
+        [SKILL_IDS.legsXp10]: 3,
+        [SKILL_IDS.highIntensityXp10]: 3,
+        [SKILL_IDS.streakXp5]: 4,
+        [SKILL_IDS.prBonus50]: 4,
+      }
+      const max = MAX_LEVELS[id] ?? 1
+      if (currentLevel >= max) return state
       return {
         ...state,
         skillPoints: state.skillPoints - 1,
-        unlockedSkills: [...state.unlockedSkills, id],
+        skillLevels: {
+          ...state.skillLevels,
+          [id]: currentLevel + 1,
+        },
       }
     }
     case 'DELETE_WORKOUT': {
@@ -363,7 +381,7 @@ function reducer(state: FitnessState, action: Action): FitnessState {
           muscle: p.muscleGroup,
           intensity: p.intensity,
           streakDays: streakForXp,
-          unlockedSkills: next.unlockedSkills,
+          skillLevels: next.skillLevels,
         }),
       )
 
@@ -372,7 +390,7 @@ function reducer(state: FitnessState, action: Action): FitnessState {
       const prev = next.personalRecords[key]
       const prevBest = prev?.bestVolume ?? 0
       const isPr = vol > prevBest
-      const prBonus = isPr ? PR_BONUS_XP : 0
+      const prBonus = computePrBonusXp(isPr, next.skillLevels)
       const workoutTotalXp = baseXp + prBonus
 
       const newStreak = streakForXp
@@ -429,7 +447,7 @@ function reducer(state: FitnessState, action: Action): FitnessState {
 
       pushToast(makeToast(`+${workoutTotalXp} XP 🔥`, 'xp'))
       if (isPr) {
-        pushToast(makeToast(`🏆 NEW PR +${PR_BONUS_XP} XP`, 'pr'))
+        pushToast(makeToast(`🏆 NEW PR +${prBonus} XP`, 'pr'))
       }
 
       let after: FitnessState = {
@@ -489,7 +507,7 @@ function createFreshState(now: Date): FitnessState {
   return {
     totalXp: 0,
     skillPoints: 0,
-    unlockedSkills: [],
+    skillLevels: {},
     workouts: [],
     muscleXp: emptyMuscleCounts(),
     currentStreak: 0,
@@ -525,7 +543,7 @@ const Ctx = createContext<{
   state: FitnessState
   dispatch: React.Dispatch<Action>
   logWorkout: (p: LogPayload) => void
-  unlockSkill: (id: SkillId) => void
+  upgradeSkill: (id: SkillId) => void
   deleteWorkout: (id: string) => void
   resetAllProgress: () => void
 } | null>(null)
@@ -535,9 +553,16 @@ export function FitnessProvider({ children }: { children: ReactNode }) {
     const now = new Date()
     const loaded = loadState()
     if (loaded) {
+      const legacyUnlocked =
+        (loaded as unknown as { unlockedSkills?: string[] }).unlockedSkills ?? []
+      const migratedLevels: SkillLevels = { ...(loaded.skillLevels ?? {}) }
+      for (const id of legacyUnlocked) {
+        if (!migratedLevels[id as SkillId]) migratedLevels[id as SkillId] = 1
+      }
       const merged: FitnessState = {
         ...createFreshState(now),
         ...loaded,
+        skillLevels: migratedLevels,
         toasts: [],
         prPopup: null,
         pendingUndoWorkout: null,
@@ -570,8 +595,8 @@ export function FitnessProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'LOG_WORKOUT', payload })
   }, [])
 
-  const unlockSkill = useCallback((skillId: SkillId) => {
-    dispatch({ type: 'UNLOCK_SKILL', skillId })
+  const upgradeSkill = useCallback((skillId: SkillId) => {
+    dispatch({ type: 'UPGRADE_SKILL', skillId })
   }, [])
 
   const deleteWorkout = useCallback((id: string) => {
@@ -587,11 +612,11 @@ export function FitnessProvider({ children }: { children: ReactNode }) {
       state,
       dispatch,
       logWorkout,
-      unlockSkill,
+      upgradeSkill,
       deleteWorkout,
       resetAllProgress,
     }),
-    [state, logWorkout, unlockSkill, deleteWorkout, resetAllProgress],
+    [state, logWorkout, upgradeSkill, deleteWorkout, resetAllProgress],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

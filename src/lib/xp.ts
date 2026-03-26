@@ -1,5 +1,5 @@
 import type { Intensity, MuscleGroup } from '../types'
-import { SKILL_IDS, type SkillId } from '../types'
+import { SKILL_IDS, type SkillLevels } from '../types'
 
 const MUSCLE_FACTOR: Record<MuscleGroup, number> = {
   Legs: 1.6,
@@ -26,10 +26,24 @@ export function trainingVolume(sets: number, reps: number, weightKg: number): nu
   return sets * reps * weightKg
 }
 
-export function skillXpMultiplier(muscle: MuscleGroup, unlocked: Set<string>): number {
+export function skillXpMultiplier(
+  muscle: MuscleGroup,
+  intensity: Intensity,
+  streakDays: number,
+  skillLevels: SkillLevels,
+): number {
   let m = 1
-  if (unlocked.has(SKILL_IDS.globalXp10)) m *= 1.1
-  if (muscle === 'Chest' && unlocked.has(SKILL_IDS.chestXp10)) m *= 1.1
+  const globalLevel = skillLevels[SKILL_IDS.globalXp10] ?? 0
+  const chestLevel = skillLevels[SKILL_IDS.chestXp10] ?? 0
+  const legsLevel = skillLevels[SKILL_IDS.legsXp10] ?? 0
+  const highIntensityLevel = skillLevels[SKILL_IDS.highIntensityXp10] ?? 0
+  const streakLevel = skillLevels[SKILL_IDS.streakXp5] ?? 0
+
+  m *= 1 + globalLevel * 0.05
+  if (muscle === 'Chest') m *= 1 + chestLevel * 0.08
+  if (muscle === 'Legs') m *= 1 + legsLevel * 0.08
+  if (intensity === 'High') m *= 1 + highIntensityLevel * 0.1
+  if (streakDays >= 3) m *= 1 + streakLevel * 0.05
   return m
 }
 
@@ -40,17 +54,22 @@ export function computeBaseWorkoutXp(params: {
   muscle: MuscleGroup
   intensity: Intensity
   streakDays: number
-  unlockedSkills: Iterable<SkillId | string>
+  skillLevels: SkillLevels
 }): number {
-  const { sets, reps, weightKg, muscle, intensity, streakDays, unlockedSkills } = params
+  const { sets, reps, weightKg, muscle, intensity, streakDays, skillLevels } = params
   const base = sets * reps * weightKg * 0.1
   const raw =
     base *
     MUSCLE_FACTOR[muscle] *
     INTENSITY_BONUS[intensity] *
     streakMultiplier(streakDays) *
-    skillXpMultiplier(muscle, new Set(unlockedSkills))
+    skillXpMultiplier(muscle, intensity, streakDays, skillLevels)
   return Math.round(raw * 100) / 100
 }
 
 export const PR_BONUS_XP = 200
+export function computePrBonusXp(isPr: boolean, skillLevels: SkillLevels): number {
+  if (!isPr) return 0
+  const prLevel = skillLevels[SKILL_IDS.prBonus50] ?? 0
+  return PR_BONUS_XP + prLevel * 50
+}
