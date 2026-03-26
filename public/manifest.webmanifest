@@ -1,0 +1,19 @@
+{
+  "name": "Gym RPG Fitness",
+  "short_name": "Gym RPG",
+  "description": "Gamified gym tracker with XP, levels, quests, streaks, and PR progression.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

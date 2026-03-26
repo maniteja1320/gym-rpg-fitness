@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+:root {
+  --neon-from: #34d399;
+  --neon-to: #22d3ee;
+  --glass: rgba(15, 23, 42, 0.55);
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  font-family: Inter, system-ui, sans-serif;
+  background: radial-gradient(ellipse 120% 80% at 50% -20%, rgba(34, 211, 238, 0.12), transparent),
+    radial-gradient(ellipse 80% 50% at 100% 50%, rgba(52, 211, 153, 0.08), transparent),
+    #020617;
+  color: #e2e8f0;
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  overflow-x: hidden;
+  touch-action: manipulation;
+}
+
+#root {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.font-display {
+  font-family: Orbitron, Inter, sans-serif;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(1rem) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes pr-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-toast-in {
+  animation: toast-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-pr-pop {
+  animation: pr-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@layer components {
+  .glass-card {
+    @apply border border-white/10 bg-slate-900/40 shadow-xl backdrop-blur-xl;
+  }
+
+  /* 16px+ on small screens avoids iOS zoom-on-focus */
+  .input-field {
+    @apply w-full min-h-11 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-3 text-base text-slate-100 outline-none transition focus:border-emerald-400/50 focus:ring-2 focus:ring-emerald-500/20 md:min-h-10 md:py-2.5 md:text-sm;
+  }
+
+  .touch-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+}
