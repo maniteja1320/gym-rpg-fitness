@@ -4,6 +4,9 @@
   --neon-from: #34d399;
   --neon-to: #22d3ee;
   --glass: rgba(15, 23, 42, 0.55);
+  --scrollbar-track: rgba(15, 23, 42, 0.75);
+  --scrollbar-thumb: rgba(16, 185, 129, 0.75);
+  --scrollbar-thumb-hover: rgba(34, 211, 238, 0.8);
 }
 
 html {
@@ -70,6 +73,32 @@ body {
   animation: pr-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
+/* Theme-aligned scrollbar styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--neon-from), var(--neon-to));
+  border: 2px solid var(--scrollbar-track);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
 @layer components {
   .glass-card {
     @apply border border-white/10 bg-slate-900/40 shadow-xl backdrop-blur-xl;
@@ -78,6 +107,42 @@ body {
   /* 16px+ on small screens avoids iOS zoom-on-focus */
   .input-field {
     @apply w-full min-h-11 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-3 text-base text-slate-100 outline-none transition focus:border-emerald-400/50 focus:ring-2 focus:ring-emerald-500/20 md:min-h-10 md:py-2.5 md:text-sm;
+  }
+
+  /* Native <select> — theme chevron, dark list where supported */
+  .select-field {
+    @apply w-full min-h-11 cursor-pointer appearance-none rounded-xl border border-emerald-500/15 bg-slate-950/70 px-3 py-3 pr-10 text-base text-slate-100 outline-none transition hover:border-emerald-400/25 focus:border-emerald-400/55 focus:ring-2 focus:ring-emerald-500/25 md:min-h-10 md:py-2.5 md:text-sm;
+    color-scheme: dark;
+    accent-color: var(--neon-from);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2334d399'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E"),
+      linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(15, 23, 42, 0.85) 100%);
+    background-repeat: no-repeat, no-repeat;
+    background-position: right 0.65rem center, 0 0;
+    background-size: 1.125rem 1.125rem, 100% 100%;
+    box-shadow: inset 0 1px 0 0 rgba(52, 211, 153, 0.06);
+  }
+
+  .select-field:focus {
+    box-shadow:
+      0 0 0 2px rgba(16, 185, 129, 0.12),
+      inset 0 1px 0 0 rgba(52, 211, 153, 0.1);
+  }
+
+  .select-field option {
+    background-color: rgb(15 23 42);
+    color: rgb(226 232 240);
+  }
+
+  /* Number inputs: hide native spinners when using themed stepper */
+  .number-field-inner {
+    @apply min-w-0 flex-1 border-0 bg-transparent px-2 py-2 text-center text-base text-slate-100 outline-none md:text-sm;
+    -moz-appearance: textfield;
+  }
+
+  .number-field-inner::-webkit-outer-spin-button,
+  .number-field-inner::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
   }
 
   .touch-scroll {

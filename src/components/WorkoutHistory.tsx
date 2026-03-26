@@ -33,6 +33,9 @@ export function WorkoutHistory() {
                 {w.prBonusXp > 0 ? (
                   <p className="text-[10px] font-medium text-amber-300/90">includes PR bonus</p>
                 ) : null}
+                {(w.streakBonusXp ?? 0) > 0 ? (
+                  <p className="text-[10px] font-medium text-orange-300/90">includes streak bonus</p>
+                ) : null}
                 <p className="text-[10px] text-slate-500">vol {Math.round(w.volume)}</p>
                 <button
                   type="button"

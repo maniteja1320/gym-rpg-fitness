@@ -80,6 +80,11 @@ function AppContent() {
           <WorkoutHistory />
         </div>
 
+        <div className="grid min-w-0 gap-6 lg:grid-cols-2 lg:gap-8">
+          <SkillTree />
+          <MuscleHeatmap />
+        </div>
+
         <QuestPanels />
 
         <div className="grid min-w-0 gap-6 lg:grid-cols-2 lg:gap-8">
@@ -91,11 +96,6 @@ function AppContent() {
               <PRChart record={prRecord} title={prTitle || 'Select an exercise'} />
             </div>
           </section>
-        </div>
-
-        <div className="grid min-w-0 gap-6 lg:grid-cols-2 lg:gap-8">
-          <SkillTree />
-          <MuscleHeatmap />
         </div>
       </main>
 

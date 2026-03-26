@@ -14,24 +14,31 @@ import type {
   PRRecord,
   QuestDefinition,
   QuestProgress,
+  QuestRarity,
   SkillLevels,
   ToastItem,
   WorkoutEntry,
 } from '../types'
 import { SKILL_IDS, type SkillId } from '../types'
 import {
-  defaultDailyQuests,
-  defaultWeeklyQuests,
+  buildBossProgressStats,
+  clampVolumeRaidBossDefs,
+  computeQuestCurrent,
   emptyMuscleCounts,
-  generateDynamicQuests,
+  generateBossChallenges,
+  generateDailyQuests,
+  generateReplacementBossChallenge,
+  generateWeeklyQuests,
   initialProgress,
   progressMap,
   refreshProgressFromStats,
+  type BossProgressStats,
 } from '../lib/quests'
 import { applyXpGain, getLevelProgress } from '../lib/level'
 import {
   computeBaseWorkoutXp,
   computePrBonusXp,
+  streakMilestoneBonus,
   trainingVolume,
 } from '../lib/xp'
 import {
@@ -46,6 +53,7 @@ export interface FitnessState {
   totalXp: number
   skillPoints: number
   skillLevels: SkillLevels
+  focusMuscleGroup: MuscleGroup | null
   workouts: WorkoutEntry[]
   muscleXp: Record<MuscleGroup, number>
   currentStreak: number
@@ -80,6 +88,7 @@ type Action =
       }
     }
   | { type: 'UPGRADE_SKILL'; skillId: SkillId }
+  | { type: 'SET_FOCUS_MUSCLE'; muscleGroup: MuscleGroup | null }
   | { type: 'DELETE_WORKOUT'; id: string }
   | { type: 'UNDO_DELETE_WORKOUT' }
   | { type: 'DISMISS_TOAST'; id: string }
@@ -110,38 +119,89 @@ function totalSpentSkillPoints(skillLevels: SkillLevels): number {
   return Object.values(skillLevels).reduce((sum, level) => sum + (level ?? 0), 0)
 }
 
+function inferRarityFromReward(rewardXp: number): QuestRarity {
+  if (rewardXp >= 2000) return 'Legendary'
+  if (rewardXp >= 500) return 'Epic'
+  if (rewardXp >= 200) return 'Rare'
+  return 'Common'
+}
+
+function normalizeQuestDefs(defs: QuestDefinition[] | undefined): QuestDefinition[] {
+  if (!defs) return []
+  return defs.map((def) => ({
+    ...def,
+    rarity: def.rarity ?? inferRarityFromReward(def.rewardXp),
+  }))
+}
+
+function buildDailyQuestsForState(
+  dailyKey: string,
+  s: Pick<FitnessState, 'totalXp' | 'currentStreak' | 'focusMuscleGroup'>,
+): QuestDefinition[] {
+  return generateDailyQuests({
+    dailyKey,
+    totalXp: s.totalXp,
+    currentStreak: s.currentStreak,
+    focusMuscleGroup: s.focusMuscleGroup,
+  })
+}
+
+function buildWeeklyQuestsForState(
+  weeklyKey: string,
+  s: Pick<FitnessState, 'totalXp' | 'currentStreak' | 'focusMuscleGroup'>,
+): QuestDefinition[] {
+  return generateWeeklyQuests({
+    weeklyKey,
+    totalXp: s.totalXp,
+    currentStreak: s.currentStreak,
+    focusMuscleGroup: s.focusMuscleGroup,
+  })
+}
+
+function buildBossChallengesForState(
+  seedKey: string,
+  s: Pick<FitnessState, 'totalXp' | 'currentStreak' | 'focusMuscleGroup'>,
+  bossStats: BossProgressStats,
+): QuestDefinition[] {
+  return generateBossChallenges({
+    seedKey,
+    totalXp: s.totalXp,
+    currentStreak: s.currentStreak,
+    focusMuscleGroup: s.focusMuscleGroup,
+    bossStats,
+  })
+}
+
 function ensurePeriods(s: FitnessState, now: Date): FitnessState {
   const today = toDateKey(now)
   const week = isoWeekKey(now)
   let next = { ...s }
 
   if (next.dailyKey !== today) {
+    const dailyDefs = buildDailyQuestsForState(today, next)
     next = {
       ...next,
       dailyKey: today,
-      dailyQuestDefs: defaultDailyQuests(),
-      dynamicQuestDefs: generateDynamicQuests(today),
-      dailyQuestProgress: initialProgress(defaultDailyQuests()),
-      dynamicQuestProgress: initialProgress(generateDynamicQuests(today)),
+      dailyQuestDefs: dailyDefs,
+      dailyQuestProgress: initialProgress(dailyDefs),
       dailyStats: emptyStats(),
     }
   }
 
   if (next.weeklyKey !== week) {
+    const weeklyDefs = buildWeeklyQuestsForState(week, next)
     next = {
       ...next,
       weeklyKey: week,
-      weeklyQuestDefs: defaultWeeklyQuests(),
-      weeklyQuestProgress: initialProgress(defaultWeeklyQuests()),
+      weeklyQuestDefs: weeklyDefs,
+      weeklyQuestProgress: initialProgress(weeklyDefs),
       weeklyStats: emptyStats(),
     }
   }
 
-  const dynOk =
-    next.dynamicQuestDefs.length > 0 &&
-    next.dynamicQuestDefs.some((d) => d.id.includes(today))
+  const dynOk = next.dynamicQuestDefs.length >= 25
   if (!dynOk) {
-    const dyn = generateDynamicQuests(today)
+    const dyn = buildBossChallengesForState(today, next, buildBossProgressStats(next.workouts))
     next = {
       ...next,
       dynamicQuestDefs: dyn,
@@ -152,11 +212,48 @@ function ensurePeriods(s: FitnessState, now: Date): FitnessState {
   return next
 }
 
+const BOSS_LADDER_SLOTS = 25
+
+function replaceCompletedBossQuests(
+  after: FitnessState,
+  dynBefore: QuestProgress[],
+): FitnessState {
+  const bossStats = buildBossProgressStats(after.workouts)
+  const defs = [...after.dynamicQuestDefs]
+  const prog = [...after.dynamicQuestProgress]
+  let changed = false
+  for (let i = 0; i < defs.length; i++) {
+    const was = dynBefore[i]?.completed ?? false
+    const now = prog[i]?.completed ?? false
+    if (was || !now) continue
+    const oldDef = defs[i]
+    if (!oldDef?.muscleGroup || oldDef.period !== 'dynamic') continue
+    const replacement = generateReplacementBossChallenge({
+      seedKey: `${after.dailyKey}-${after.totalXp}-slot${i}-${oldDef.type}`,
+      muscleGroup: oldDef.muscleGroup,
+      totalXp: after.totalXp,
+      currentStreak: after.currentStreak,
+      forcedKind: oldDef.type,
+      bossStats,
+    })
+    defs[i] = replacement
+    prog[i] = {
+      questId: replacement.id,
+      current: Math.min(replacement.target, computeQuestCurrent(replacement, bossStats)),
+      completed: false,
+    }
+    changed = true
+  }
+  if (!changed) return after
+  return { ...after, dynamicQuestDefs: defs, dynamicQuestProgress: prog }
+}
+
 function settleQuests(state: FitnessState, toasts: ToastItem[]): FitnessState {
   let total = state.totalXp
   let skillPoints = state.skillPoints
   let dailyStats = { ...state.dailyStats, muscleCounts: { ...state.dailyStats.muscleCounts } }
   let weeklyStats = { ...state.weeklyStats, muscleCounts: { ...state.weeklyStats.muscleCounts } }
+  const bossStats = buildBossProgressStats(state.workouts)
   let dProg = [...state.dailyQuestProgress]
   let wProg = [...state.weeklyQuestProgress]
   let dynProg = [...state.dynamicQuestProgress]
@@ -172,7 +269,7 @@ function settleQuests(state: FitnessState, toasts: ToastItem[]): FitnessState {
 
     dProg = refreshProgressFromStats(state.dailyQuestDefs, dailyStats, progressMap(dProg))
     wProg = refreshProgressFromStats(state.weeklyQuestDefs, weeklyStats, progressMap(wProg))
-    dynProg = refreshProgressFromStats(state.dynamicQuestDefs, dailyStats, progressMap(dynProg))
+    dynProg = refreshProgressFromStats(state.dynamicQuestDefs, bossStats, progressMap(dynProg))
 
     let granted = 0
 
@@ -332,6 +429,64 @@ function reducer(state: FitnessState, action: Action): FitnessState {
         },
       }
     }
+    case 'SET_FOCUS_MUSCLE': {
+      const dailyDefs = buildDailyQuestsForState(state.dailyKey, {
+        totalXp: state.totalXp,
+        currentStreak: state.currentStreak,
+        focusMuscleGroup: action.muscleGroup,
+      })
+      const weeklyDefs = buildWeeklyQuestsForState(state.weeklyKey, {
+        totalXp: state.totalXp,
+        currentStreak: state.currentStreak,
+        focusMuscleGroup: action.muscleGroup,
+      })
+      const bossStats = buildBossProgressStats(state.workouts)
+      let bossDefs: QuestDefinition[]
+      let bossProgress: QuestProgress[]
+      if (state.dynamicQuestDefs.length >= BOSS_LADDER_SLOTS) {
+        bossDefs = state.dynamicQuestDefs
+        bossProgress = refreshProgressFromStats(
+          bossDefs,
+          bossStats,
+          progressMap(state.dynamicQuestProgress),
+        )
+      } else {
+        bossDefs = buildBossChallengesForState(
+          state.dailyKey,
+          {
+            totalXp: state.totalXp,
+            currentStreak: state.currentStreak,
+            focusMuscleGroup: action.muscleGroup,
+          },
+          bossStats,
+        )
+        bossProgress = refreshProgressFromStats(
+          bossDefs,
+          bossStats,
+          progressMap(initialProgress(bossDefs)),
+        )
+      }
+      const dailyProgress = refreshProgressFromStats(
+        dailyDefs,
+        state.dailyStats,
+        progressMap(initialProgress(dailyDefs)),
+      )
+      const weeklyProgress = refreshProgressFromStats(
+        weeklyDefs,
+        state.weeklyStats,
+        progressMap(initialProgress(weeklyDefs)),
+      )
+      return {
+        ...state,
+        focusMuscleGroup: action.muscleGroup,
+        dailyQuestDefs: dailyDefs,
+        dailyQuestProgress: dailyProgress,
+        weeklyQuestDefs: weeklyDefs,
+        weeklyQuestProgress: weeklyProgress,
+        dynamicQuestDefs: bossDefs,
+        dynamicQuestProgress: bossProgress,
+      }
+    }
     case 'DELETE_WORKOUT': {
       const deleted = state.workouts.find((w) => w.id === action.id)
       const remaining = state.workouts.filter((w) => w.id !== action.id)
@@ -364,6 +519,7 @@ function reducer(state: FitnessState, action: Action): FitnessState {
     case 'LOG_WORKOUT': {
       const now = new Date()
       let next = ensurePeriods(state, now)
+      const dynBefore = [...next.dynamicQuestProgress]
       const todayKey = toDateKey(now)
       const p = action.payload
 
@@ -384,14 +540,15 @@ function reducer(state: FitnessState, action: Action): FitnessState {
           skillLevels: next.skillLevels,
         }),
       )
+      const streakBonus = streakMilestoneBonus(streakForXp)
 
       const vol = trainingVolume(p.sets, p.reps, p.weightKg)
       const key = prKey(p.muscleGroup, p.exercise)
       const prev = next.personalRecords[key]
       const prevBest = prev?.bestVolume ?? 0
       const isPr = vol > prevBest
-      const prBonus = computePrBonusXp(isPr, next.skillLevels)
-      const workoutTotalXp = baseXp + prBonus
+      const prBonus = computePrBonusXp(isPr, baseXp, next.skillLevels)
+      const workoutTotalXp = baseXp + prBonus + streakBonus
 
       const newStreak = streakForXp
 
@@ -414,6 +571,7 @@ function reducer(state: FitnessState, action: Action): FitnessState {
         intensity: p.intensity,
         baseXp,
         prBonusXp: prBonus,
+        streakBonusXp: streakBonus,
         totalXp: workoutTotalXp,
         volume: vol,
       }
@@ -447,7 +605,10 @@ function reducer(state: FitnessState, action: Action): FitnessState {
 
       pushToast(makeToast(`+${workoutTotalXp} XP 🔥`, 'xp'))
       if (isPr) {
-        pushToast(makeToast(`🏆 NEW PR +${prBonus} XP`, 'pr'))
+        pushToast(makeToast(`🏆 NEW PR 2x bonus +${prBonus} XP`, 'pr'))
+      }
+      if (streakBonus > 0) {
+        pushToast(makeToast(`🔥 Streak milestone +${streakBonus} XP`, 'xp'))
       }
 
       let after: FitnessState = {
@@ -472,6 +633,7 @@ function reducer(state: FitnessState, action: Action): FitnessState {
       }
 
       after = settleQuests(after, toasts)
+      after = replaceCompletedBossQuests(after, dynBefore)
 
       return after
     }
@@ -501,13 +663,30 @@ function saveState(s: FitnessState) {
 function createFreshState(now: Date): FitnessState {
   const today = toDateKey(now)
   const week = isoWeekKey(now)
-  const daily = defaultDailyQuests()
-  const weekly = defaultWeeklyQuests()
-  const dynamic = generateDynamicQuests(today)
+  const daily = generateDailyQuests({
+    dailyKey: today,
+    totalXp: 0,
+    currentStreak: 0,
+    focusMuscleGroup: null,
+  })
+  const weekly = generateWeeklyQuests({
+    weeklyKey: week,
+    totalXp: 0,
+    currentStreak: 0,
+    focusMuscleGroup: null,
+  })
+  const dynamic = generateBossChallenges({
+    seedKey: today,
+    totalXp: 0,
+    currentStreak: 0,
+    focusMuscleGroup: null,
+    bossStats: buildBossProgressStats([]),
+  })
   return {
     totalXp: 0,
     skillPoints: 0,
     skillLevels: {},
+    focusMuscleGroup: null,
     workouts: [],
     muscleXp: emptyMuscleCounts(),
     currentStreak: 0,
@@ -544,6 +723,7 @@ const Ctx = createContext<{
   dispatch: React.Dispatch<Action>
   logWorkout: (p: LogPayload) => void
   upgradeSkill: (id: SkillId) => void
+  setFocusMuscle: (muscleGroup: MuscleGroup | null) => void
   deleteWorkout: (id: string) => void
   resetAllProgress: () => void
 } | null>(null)
@@ -559,10 +739,26 @@ export function FitnessProvider({ children }: { children: ReactNode }) {
       for (const id of legacyUnlocked) {
         if (!migratedLevels[id as SkillId]) migratedLevels[id as SkillId] = 1
       }
+      const bossStatsHydrate = buildBossProgressStats(loaded.workouts ?? [])
+      const dynamicDefs = clampVolumeRaidBossDefs(
+        normalizeQuestDefs(loaded.dynamicQuestDefs),
+        loaded.totalXp ?? 0,
+        loaded.currentStreak ?? 0,
+        bossStatsHydrate,
+      )
+      const dynamicProg = refreshProgressFromStats(
+        dynamicDefs,
+        bossStatsHydrate,
+        progressMap(loaded.dynamicQuestProgress ?? []),
+      )
       const merged: FitnessState = {
         ...createFreshState(now),
         ...loaded,
         skillLevels: migratedLevels,
+        dailyQuestDefs: normalizeQuestDefs(loaded.dailyQuestDefs),
+        weeklyQuestDefs: normalizeQuestDefs(loaded.weeklyQuestDefs),
+        dynamicQuestDefs: dynamicDefs,
+        dynamicQuestProgress: dynamicProg,
         toasts: [],
         prPopup: null,
         pendingUndoWorkout: null,
@@ -599,6 +795,10 @@ export function FitnessProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'UPGRADE_SKILL', skillId })
   }, [])
 
+  const setFocusMuscle = useCallback((muscleGroup: MuscleGroup | null) => {
+    dispatch({ type: 'SET_FOCUS_MUSCLE', muscleGroup })
+  }, [])
+
   const deleteWorkout = useCallback((id: string) => {
     dispatch({ type: 'DELETE_WORKOUT', id })
   }, [])
@@ -613,10 +813,11 @@ export function FitnessProvider({ children }: { children: ReactNode }) {
       dispatch,
       logWorkout,
       upgradeSkill,
+      setFocusMuscle,
       deleteWorkout,
       resetAllProgress,
     }),
-    [state, logWorkout, upgradeSkill, deleteWorkout, resetAllProgress],
+    [state, logWorkout, upgradeSkill, setFocusMuscle, deleteWorkout, resetAllProgress],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

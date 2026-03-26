@@ -1,8 +1,16 @@
 export type MuscleGroup = 'Chest' | 'Shoulders' | 'Back' | 'Arms' | 'Legs'
 export type Intensity = 'Low' | 'Medium' | 'High'
 
-export type QuestType = 'workout_count' | 'xp_target' | 'muscle_target'
+export type QuestType =
+  | 'workout_count'
+  | 'xp_target'
+  | 'muscle_target'
+  | 'muscle_volume'
+  | 'muscle_xp'
+  | 'muscle_pr_sessions'
+  | 'muscle_high_intensity'
 export type QuestPeriod = 'daily' | 'weekly' | 'dynamic'
+export type QuestRarity = 'Common' | 'Rare' | 'Epic' | 'Legendary'
 
 export interface QuestDefinition {
   id: string
@@ -11,6 +19,7 @@ export interface QuestDefinition {
   muscleGroup?: MuscleGroup
   rewardXp: number
   period: QuestPeriod
+  rarity: QuestRarity
   /** Display only */
   title: string
 }
@@ -33,6 +42,7 @@ export interface WorkoutEntry {
   intensity: Intensity
   baseXp: number
   prBonusXp: number
+  streakBonusXp?: number
   totalXp: number
   volume: number
 }

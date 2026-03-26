@@ -54,7 +54,7 @@ export function WorkoutForm() {
           <select
             value={muscle}
             onChange={(e) => onMuscleChange(e.target.value as MuscleGroup)}
-            className="input-field"
+            className="select-field"
           >
             {MUSCLE_GROUPS.map((m) => (
               <option key={m} value={m}>
@@ -67,7 +67,7 @@ export function WorkoutForm() {
           <select
             value={subType}
             onChange={(e) => onSubChange(e.target.value)}
-            className="input-field"
+            className="select-field"
           >
             {subTypes.map((s) => (
               <option key={s} value={s}>
@@ -80,7 +80,7 @@ export function WorkoutForm() {
           <select
             value={exercise}
             onChange={(e) => setExercise(e.target.value)}
-            className="input-field"
+            className="select-field"
           >
             {exercisesForSub.map((ex) => (
               <option key={ex} value={ex}>
@@ -90,31 +90,27 @@ export function WorkoutForm() {
           </select>
         </Field>
         <Field label="Sets">
-          <input
-            type="number"
-            min={1}
+          <NumberStepper
             value={sets}
-            onChange={(e) => setSets(Number(e.target.value))}
-            className="input-field"
+            onChange={setSets}
+            min={1}
+            step={1}
           />
         </Field>
         <Field label="Reps">
-          <input
-            type="number"
-            min={1}
+          <NumberStepper
             value={reps}
-            onChange={(e) => setReps(Number(e.target.value))}
-            className="input-field"
+            onChange={setReps}
+            min={1}
+            step={1}
           />
         </Field>
         <Field label="Weight (kg)">
-          <input
-            type="number"
+          <NumberStepper
+            value={weight}
+            onChange={setWeight}
             min={1}
             step={0.5}
-            value={weight}
-            onChange={(e) => setWeight(Number(e.target.value))}
-            className="input-field"
           />
         </Field>
         <Field label="Intensity" className="sm:col-span-2">
@@ -145,6 +141,61 @@ export function WorkoutForm() {
         </div>
       </form>
     </section>
+  )
+}
+
+function roundToStep(value: number, step: number): number {
+  const rounded = Math.round(value / step) * step
+  const precision = step < 1 ? 2 : 0
+  return Number(rounded.toFixed(precision))
+}
+
+function NumberStepper({
+  value,
+  onChange,
+  min,
+  step,
+}: {
+  value: number
+  onChange: (n: number) => void
+  min: number
+  step: number
+}) {
+  const dec = () => {
+    const next = roundToStep(Math.max(min, value - step), step)
+    onChange(next)
+  }
+  const inc = () => {
+    onChange(roundToStep(value + step, step))
+  }
+  const onInput = (raw: string) => {
+    const n = Number(raw)
+    if (Number.isNaN(n)) return
+    onChange(Math.max(min, roundToStep(n, step)))
+  }
+  const atMin = value <= min + 1e-9
+
+  const btn =
+    'flex min-h-11 w-11 shrink-0 touch-manipulation items-center justify-center border-emerald-500/25 bg-gradient-to-b from-slate-900/95 to-slate-950 text-lg font-semibold leading-none text-emerald-400 transition hover:from-emerald-500/25 hover:to-cyan-500/15 hover:text-cyan-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-35 md:min-h-10 md:w-10 md:text-base'
+
+  return (
+    <div className="flex min-h-11 overflow-hidden rounded-xl border border-emerald-500/20 bg-slate-950/75 shadow-[inset_0_1px_0_0_rgba(52,211,153,0.08)] focus-within:border-emerald-400/45 focus-within:ring-2 focus-within:ring-emerald-500/25 md:min-h-10">
+      <button type="button" className={`${btn} border-r`} onClick={dec} disabled={atMin} aria-label="Decrease">
+        −
+      </button>
+      <input
+        type="number"
+        min={min}
+        step={step}
+        value={value}
+        onChange={(e) => onInput(e.target.value)}
+        className="number-field-inner"
+        aria-label="Value"
+      />
+      <button type="button" className={`${btn} border-l`} onClick={inc} aria-label="Increase">
+        +
+      </button>
+    </div>
   )
 }
 

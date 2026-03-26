@@ -15,6 +15,18 @@ const INTENSITY_BONUS: Record<Intensity, number> = {
   Low: 1,
 }
 
+const SET_XP: Record<Intensity, number> = {
+  Low: 10,
+  Medium: 30,
+  High: 50,
+}
+
+const WORKOUT_FINISH_XP: Record<Intensity, number> = {
+  Low: 50,
+  Medium: 125,
+  High: 200,
+}
+
 export function streakMultiplier(streakDays: number): number {
   if (streakDays >= 30) return 1.5
   if (streakDays >= 7) return 1.25
@@ -56,8 +68,8 @@ export function computeBaseWorkoutXp(params: {
   streakDays: number
   skillLevels: SkillLevels
 }): number {
-  const { sets, reps, weightKg, muscle, intensity, streakDays, skillLevels } = params
-  const base = sets * reps * weightKg * 0.1
+  const { sets, muscle, intensity, streakDays, skillLevels } = params
+  const base = sets * SET_XP[intensity] + WORKOUT_FINISH_XP[intensity]
   const raw =
     base *
     MUSCLE_FACTOR[muscle] *
@@ -68,8 +80,32 @@ export function computeBaseWorkoutXp(params: {
 }
 
 export const PR_BONUS_XP = 200
-export function computePrBonusXp(isPr: boolean, skillLevels: SkillLevels): number {
+export function computePrBonusXp(
+  isPr: boolean,
+  baseWorkoutXp: number,
+  skillLevels: SkillLevels,
+): number {
   if (!isPr) return 0
+  // PR gives a 2x workout bonus (add one extra base workout XP),
+  // plus any PR Hunter upgrade bonus.
   const prLevel = skillLevels[SKILL_IDS.prBonus50] ?? 0
-  return PR_BONUS_XP + prLevel * 50
+  return baseWorkoutXp + prLevel * 50
+}
+
+export function streakMilestoneBonus(streakDays: number): number {
+  if (streakDays === 100) return 3000
+  if (streakDays === 30) return 750
+  if (streakDays === 7) return 150
+  if (streakDays === 3) return 50
+  return 0
+}
+
+export function muscleRankFromXp(xp: number): string {
+  if (xp >= 50000) return 'Legend'
+  if (xp >= 30000) return 'Master'
+  if (xp >= 18000) return 'Diamond'
+  if (xp >= 10000) return 'Platinum'
+  if (xp >= 5000) return 'Gold'
+  if (xp >= 2000) return 'Silver'
+  return 'Bronze'
 }
