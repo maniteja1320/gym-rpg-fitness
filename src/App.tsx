@@ -12,7 +12,7 @@ import { WorkoutHistory } from './components/WorkoutHistory.tsx'
 import { useFitness } from './context/FitnessContext.tsx'
 
 function AppContent() {
-  const { state } = useFitness()
+  const { state, resetAllProgress } = useFitness()
   const keys = useMemo(() => Object.keys(state.personalRecords), [state.personalRecords])
   const [selectedPr, setSelectedPr] = useState<string | null>(null)
 
@@ -28,6 +28,23 @@ function AppContent() {
 
   const prRecord = selectedPr ? state.personalRecords[selectedPr] ?? null : null
   const prTitle = selectedPr ? selectedPr.split('::').slice(1).join('::') : ''
+  const onResetAllProgress = () => {
+    const confirmed = window.confirm(
+      'This will permanently reset all your progress. Do you want to continue?',
+    )
+    if (!confirmed) return
+
+    const password = window.prompt('Enter password to reset all progress:')
+    if (password === null) return
+
+    if (password !== 'Administrator') {
+      window.alert('Incorrect password. Progress was not reset.')
+      return
+    }
+
+    resetAllProgress()
+    window.alert('All progress has been reset.')
+  }
 
   return (
     <div className="min-h-[100dvh] min-h-screen pb-[calc(5rem+env(safe-area-inset-bottom,0px))]">
@@ -45,6 +62,13 @@ function AppContent() {
               progression.
             </p>
           </div>
+          <button
+            type="button"
+            onClick={onResetAllProgress}
+            className="mt-3 self-start rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20 md:mt-0"
+          >
+            Reset all progress
+          </button>
         </div>
       </header>
 

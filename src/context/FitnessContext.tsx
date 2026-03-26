@@ -62,6 +62,7 @@ export interface FitnessState {
   weeklyStats: { workouts: number; xp: number; muscleCounts: Record<MuscleGroup, number> }
   toasts: ToastItem[]
   prPopup: PRPopup | null
+  pendingUndoWorkout: WorkoutEntry | null
 }
 
 type Action =
@@ -78,6 +79,8 @@ type Action =
       }
     }
   | { type: 'UNLOCK_SKILL'; skillId: SkillId }
+  | { type: 'DELETE_WORKOUT'; id: string }
+  | { type: 'UNDO_DELETE_WORKOUT' }
   | { type: 'DISMISS_TOAST'; id: string }
   | { type: 'CLEAR_PR_POPUP' }
   | { type: 'HYDRATE'; state: FitnessState }
@@ -210,12 +213,95 @@ function settleQuests(state: FitnessState, toasts: ToastItem[]): FitnessState {
   }
 }
 
+function rebuildStateFromWorkouts(previous: FitnessState, remaining: WorkoutEntry[]): FitnessState {
+  const now = new Date()
+  let next = createFreshState(now)
+  next = {
+    ...next,
+    unlockedSkills: [...previous.unlockedSkills],
+    // Re-apply spent points for currently unlocked skills (1 point per skill).
+    skillPoints: -previous.unlockedSkills.length,
+  }
+
+  const sorted = [...remaining].sort(
+    (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
+  )
+
+  for (const entry of sorted) {
+    const at = new Date(entry.at)
+    next = ensurePeriods(next, at)
+    const dayKey = toDateKey(at)
+
+    const streakForXp = nextStreakAfterWorkout(next.lastWorkoutDate, next.currentStreak, dayKey)
+    const key = prKey(entry.muscleGroup, entry.exercise)
+    const prev = next.personalRecords[key]
+    const prevBest = prev?.bestVolume ?? 0
+    const isPr = entry.volume > prevBest
+
+    const personalRecords = { ...next.personalRecords }
+    if (isPr) {
+      const history = [...(prev?.history ?? [])]
+      history.push({ date: dayKey, volume: entry.volume })
+      personalRecords[key] = { bestVolume: entry.volume, history }
+    }
+
+    const muscleXp = { ...next.muscleXp }
+    muscleXp[entry.muscleGroup] = (muscleXp[entry.muscleGroup] ?? 0) + entry.totalXp
+
+    const applied = applyXpGain(next.totalXp, entry.totalXp)
+    const dailyStats = {
+      workouts: next.dailyStats.workouts + 1,
+      xp: next.dailyStats.xp + entry.totalXp,
+      muscleCounts: { ...next.dailyStats.muscleCounts },
+    }
+    dailyStats.muscleCounts[entry.muscleGroup] += 1
+
+    const weeklyStats = {
+      workouts: next.weeklyStats.workouts + 1,
+      xp: next.weeklyStats.xp + entry.totalXp,
+      muscleCounts: { ...next.weeklyStats.muscleCounts },
+    }
+    weeklyStats.muscleCounts[entry.muscleGroup] += 1
+
+    next = {
+      ...next,
+      totalXp: applied.totalXp,
+      skillPoints: next.skillPoints + applied.levelsGained,
+      workouts: [entry, ...next.workouts],
+      muscleXp,
+      currentStreak: streakForXp,
+      lastWorkoutDate: dayKey,
+      personalRecords,
+      dailyStats,
+      weeklyStats,
+      toasts: [],
+      prPopup: null,
+    }
+
+    next = settleQuests(next, [])
+  }
+
+  return {
+    ...next,
+    // Avoid surfacing negative available points if XP falls below spent allocations.
+    skillPoints: Math.max(0, next.skillPoints),
+    toasts: [],
+    prPopup: null,
+  }
+}
+
 function reducer(state: FitnessState, action: Action): FitnessState {
   switch (action.type) {
     case 'HYDRATE':
       return action.state
-    case 'DISMISS_TOAST':
-      return { ...state, toasts: state.toasts.filter((t) => t.id !== action.id) }
+    case 'DISMISS_TOAST': {
+      const dismissed = state.toasts.find((t) => t.id === action.id)
+      return {
+        ...state,
+        toasts: state.toasts.filter((t) => t.id !== action.id),
+        pendingUndoWorkout: dismissed?.undoDeleteWorkout ? null : state.pendingUndoWorkout,
+      }
+    }
     case 'CLEAR_PR_POPUP':
       return { ...state, prPopup: null }
     case 'UNLOCK_SKILL': {
@@ -226,6 +312,35 @@ function reducer(state: FitnessState, action: Action): FitnessState {
         ...state,
         skillPoints: state.skillPoints - 1,
         unlockedSkills: [...state.unlockedSkills, id],
+      }
+    }
+    case 'DELETE_WORKOUT': {
+      const deleted = state.workouts.find((w) => w.id === action.id)
+      const remaining = state.workouts.filter((w) => w.id !== action.id)
+      if (remaining.length === state.workouts.length) return state
+      const rebuilt = rebuildStateFromWorkouts(state, remaining)
+      if (!deleted) return rebuilt
+      return {
+        ...rebuilt,
+        pendingUndoWorkout: deleted,
+        toasts: [
+          ...rebuilt.toasts,
+          {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            message: 'Workout deleted',
+            variant: 'info',
+            undoDeleteWorkout: true,
+          },
+        ],
+      }
+    }
+    case 'UNDO_DELETE_WORKOUT': {
+      if (!state.pendingUndoWorkout) return state
+      const restored = rebuildStateFromWorkouts(state, [state.pendingUndoWorkout, ...state.workouts])
+      return {
+        ...restored,
+        pendingUndoWorkout: null,
+        toasts: [...restored.toasts, makeToast('Workout restored', 'info')],
       }
     }
     case 'LOG_WORKOUT': {
@@ -358,9 +473,10 @@ function loadState(): FitnessState | null {
 }
 
 function saveState(s: FitnessState) {
-  const { toasts, prPopup, ...rest } = s
+  const { toasts, prPopup, pendingUndoWorkout, ...rest } = s
   void toasts
   void prPopup
+  void pendingUndoWorkout
   localStorage.setItem(STORAGE_KEY, JSON.stringify(rest))
 }
 
@@ -391,6 +507,7 @@ function createFreshState(now: Date): FitnessState {
     weeklyStats: emptyStats(),
     toasts: [],
     prPopup: null,
+    pendingUndoWorkout: null,
   }
 }
 
@@ -409,6 +526,8 @@ const Ctx = createContext<{
   dispatch: React.Dispatch<Action>
   logWorkout: (p: LogPayload) => void
   unlockSkill: (id: SkillId) => void
+  deleteWorkout: (id: string) => void
+  resetAllProgress: () => void
 } | null>(null)
 
 export function FitnessProvider({ children }: { children: ReactNode }) {
@@ -421,6 +540,7 @@ export function FitnessProvider({ children }: { children: ReactNode }) {
         ...loaded,
         toasts: [],
         prPopup: null,
+        pendingUndoWorkout: null,
       }
       return ensurePeriods(merged, now)
     }
@@ -432,11 +552,11 @@ export function FitnessProvider({ children }: { children: ReactNode }) {
   }, [state])
 
   useEffect(() => {
-    const ids = state.toasts.map((t) => t.id)
-    if (ids.length === 0) return
-    const timers = ids.map((id) =>
-      setTimeout(() => dispatch({ type: 'DISMISS_TOAST', id }), 3800),
-    )
+    if (state.toasts.length === 0) return
+    const timers = state.toasts.map((toast) => {
+      const ms = toast.undoDeleteWorkout ? 8000 : 3800
+      return setTimeout(() => dispatch({ type: 'DISMISS_TOAST', id: toast.id }), ms)
+    })
     return () => timers.forEach(clearTimeout)
   }, [state.toasts])
 
@@ -454,14 +574,24 @@ export function FitnessProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'UNLOCK_SKILL', skillId })
   }, [])
 
+  const deleteWorkout = useCallback((id: string) => {
+    dispatch({ type: 'DELETE_WORKOUT', id })
+  }, [])
+
+  const resetAllProgress = useCallback(() => {
+    dispatch({ type: 'HYDRATE', state: createFreshState(new Date()) })
+  }, [])
+
   const value = useMemo(
     () => ({
       state,
       dispatch,
       logWorkout,
       unlockSkill,
+      deleteWorkout,
+      resetAllProgress,
     }),
-    [state, logWorkout, unlockSkill],
+    [state, logWorkout, unlockSkill, deleteWorkout, resetAllProgress],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

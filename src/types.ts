@@ -52,6 +52,7 @@ export interface ToastItem {
   id: string
   message: string
   variant: 'xp' | 'quest' | 'pr' | 'info'
+  undoDeleteWorkout?: boolean
 }
 
 export interface PRPopup {

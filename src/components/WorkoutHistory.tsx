@@ -1,7 +1,7 @@
 import { useFitness } from '../context/FitnessContext.tsx'
 
 export function WorkoutHistory() {
-  const { state } = useFitness()
+  const { state, deleteWorkout } = useFitness()
   const rows = state.workouts.slice(0, 40)
 
   return (
@@ -34,6 +34,19 @@ export function WorkoutHistory() {
                   <p className="text-[10px] font-medium text-amber-300/90">includes PR bonus</p>
                 ) : null}
                 <p className="text-[10px] text-slate-500">vol {Math.round(w.volume)}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ok = window.confirm(
+                      `Delete "${w.exercise}" workout? This will recalculate progress.`,
+                    )
+                    if (!ok) return
+                    deleteWorkout(w.id)
+                  }}
+                  className="mt-1 rounded-lg border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200 transition hover:bg-rose-500/20"
+                >
+                  Delete
+                </button>
               </div>
             </article>
           ))
